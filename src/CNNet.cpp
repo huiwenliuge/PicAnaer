@@ -12,6 +12,7 @@ CNNet::CNNet(const char* pathroot,int n){//,int* dimn,int* dimm,int depth){
         ccore[i] = allocmamat(coredim);
         dccore[i] = allocmamat(coredim);
     }
+    
     m2fc = (mamat**)malloc(sizeof(mamat*)*Mnum);
     dm2fc = (mamat**)malloc(sizeof(mamat*)*Mnum);
     for(i=0;i<Mnum;++i){
@@ -22,8 +23,26 @@ CNNet::CNNet(const char* pathroot,int n){//,int* dimn,int* dimm,int depth){
             dm2fc[i][j] = allocmamat(ldim);
         }
     }
-    FetchParm("debug2");
-    FetchSque("../Material/A");
+
+    const char* baseparm="./Dictionary";
+    const char* parm = "PARM";
+    const char* basemate="./Material";
+    const char* hz = "A";
+    char* parmpath = (char*)calloc(sizeof(char),101);
+    char* dictpath = (char*)calloc(sizeof(char),101);
+    strcpy(parmpath,baseparm);
+    strcpy(parmpath+12,pathroot);
+    strcpy(parmpath+12+strlen(pathroot),parm);
+    strcpy(dictpath,basemate);
+    strcpy(dictpath+10,pathroot);
+    strcpy(dictpath+10+strlen(pathroot),hz);
+
+
+    std::cout<<parmpath<<"\n";
+    std::cout<<dictpath<<"\n";
+
+    FetchParm(parmpath);
+    FetchSque(dictpath);
 }
 
 void CNNet::crtParmbyRandom(){
@@ -276,6 +295,7 @@ void CNNet::BackwardAlgorithm(double lnrt){
 
     squence stmp = sque;
     while(stmp){
+        //std::cout<<stmp->num<<'\n';
         _BackwardAlgorithm(stmp);
         stmp=stmp->next;
     }
@@ -296,6 +316,49 @@ void CNNet::BackwardAlgorithm(double lnrt){
         }
     }
 
+}
+
+void CNNet::BackwardAlgorithm_Nthread(double lnrt,int Nthread){
+    learningrate = lnrt;
+    int m,n,i,j;
+    for(m=0;m<Mnum;++m){
+        for(i=0;i<coredim;++i){
+            memset(dccore[m][i],'\0',sizeof(double)*coredim);
+        }
+        for(i=0;i<fcnum;++i){
+            for(j=0;j<ldim;++j){
+                memset(dm2fc[m][i][j],'\0',sizeof(double)*ldim);
+            }
+        }
+    }
+
+    flag = totnum;
+    //std::cout<<"flag"<<flag<<'\n';
+    std::thread th[2];
+
+    for(n=0;n<Nthread;++n){
+        th[n]=std::thread(_BackwardAlgorithm_SingleTask,\
+            this,0);
+    }
+
+    for(n=0;n<Nthread;++n)
+        th[n].join();
+
+    for(m=0;m<Mnum;++m){
+        for(i=0;i<coredim;++i){
+            for(j=0;j<coredim;++j){
+                ccore[m][i][j]-=dccore[m][i][j]*learningrate;
+            }
+        }
+        for(n=0;n<fcnum;++n){
+            for(i=0;i<ldim;++i){
+                for(j=0;j<ldim;++j){
+                    m2fc[m][n][i][j]-=dm2fc[m][n][i][j]*\
+                    learningrate;
+                }
+            }
+        }
+    }
 }
 
 void CNNet::_ForwardAlgorithm(squence squeunit){
@@ -399,14 +462,17 @@ void CNNet::_BackwardAlgorithm(squence squeunit){
 
     //
     // Update 
-    
+    static std::mutex gmutex;
+
     for(out=0;out<Mnum;++out){
         for(i=0;i<fcnum;++i){
             for(m=0;m<ldim;++m){
                 for(n=0;n<ldim;++n){
+                    gmutex.lock();
                     dm2fc[out][i][m][n]+=\
                     squeunit->DLDf[i]*\
                     squeunit->LLayer[out][m][n];
+                    gmutex.unlock();
                 }
             }
         }
@@ -418,9 +484,11 @@ void CNNet::_BackwardAlgorithm(squence squeunit){
                 //
                 for(m=0;m<coredim;++m){
                     for(n=0;n<coredim;++n){
+                        gmutex.lock();
                         dccore[out][m][n]+=\
                         squeunit->DLDM[out][i][j]*\
                         squeunit->InLayer[i+m][j+n];
+                        gmutex.unlock();
                     }
                 }
 
@@ -454,4 +522,26 @@ void CNNet::_ForwardAlgorithm_SingleTask(CNNet* cnn,int n){
             cnn->_ForwardAlgorithm(tsqu);
         }
     }
+}
+
+void CNNet::_BackwardAlgorithm_SingleTask(CNNet* cnn,int n){
+
+    long num;
+    squence tsqu = cnn->sque;
+    num = tsqu->num;
+    static std::mutex gmutex;
+
+    while(cnn->flag > 0){
+        gmutex.lock();
+        cnn->flag--;
+        num = cnn->flag;
+        //std::cout<<num<<'\n';
+        gmutex.unlock();
+        tsqu = gonext(tsqu,num);
+        if(tsqu!=NULL){
+            cnn->_BackwardAlgorithm(tsqu);
+        }
+
+    }
+
 }

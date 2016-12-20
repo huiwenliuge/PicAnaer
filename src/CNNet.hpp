@@ -152,6 +152,7 @@ class CNNet{
         void ForwardAlgorithm();
         void ForwardAlgorithm_Nthread(int n);
         void BackwardAlgorithm(double lnrt);
+        void BackwardAlgorithm_Nthread(double lnrt,int n);
 
     private:
         mamat* ccore;//n*5*5
@@ -173,6 +174,7 @@ class CNNet{
         void _BackwardAlgorithm(squence squeunit);
 
         static void _ForwardAlgorithm_SingleTask(CNNet* cnn,int n);
+        static void _BackwardAlgorithm_SingleTask(CNNet* cnn,int n);
 };
 
 #endif
